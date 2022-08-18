@@ -7,9 +7,7 @@
      
    This sketch is based on a sample sketch for the BM019 module
    from Solutions Cubed.
-
    Wiring for UNO / Pro-Mini:
-
    Arduino          ESP32  WemosD1          BM019           BLE-HM11
    IRQ: Pin 9       IO26     IO16 (D0)    DIN: pin 2
    SS: pin 10       IO5      IO15 (D8)    SS: pin 3
@@ -25,27 +23,21 @@
 */
 
 #define ESP32
-//#define ESP8266
-
 #define BUG_SPI
 #define PRINTMEM
-
 #include <SPI.h>
 #include "ArduinoSort.h"
-//#include <SoftwareSerial.h>
+
 #ifdef ESP32
-//#include "BluetoothSerial.h" //Header File for Serial Bluetooth, will be added by default into Arduino
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
-
+#define ADC_PIN 34              //Pino 34 adicionado dois resitores para queda de tensão e posterior leitura da tensão no pino referido.
 #define SERVICE_UART_UUID      "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
-
 #endif
-
 
 #define MAX_BLE_WAIT 90 // Maximum bluetooth re-connect time in seconds 
 #define SLEEP_TIME 300000000 // SleepTime in µs 5 min = 300 s      //
@@ -61,9 +53,7 @@
 #define NBEXRAW  5 // Exclus les NBEXRAW valeur dont l'écart type est maximal par rapport à la droite des moindres carré
 byte RXBuffer[RXBUFSIZE];
 byte NfcMem[NFCMEMSIZE];
-
 byte NFCReady = 0;  // used to track NFC state
-////RTC_DATA_ATTR byte FirstRun = 1;
 int batteryPcnt;
 long batteryMv;
 int noDiffCount = 0;
@@ -72,36 +62,20 @@ float trend[16];
 float A = 0;
 float B = 0;
 
-
-#ifdef ESP8266
-const int SSPin = 15;  // Slave Select pin
-const int IRQPin = 16;  // Sends wake-up pulse for BM019
-const int NFCPin1 = D1; // Power pin BM019
-const int NFCPin2 = D2; // Power pin BM019
-const int NFCPin3 = D3; // Power pin BM019
-const int NFCPin4 = D4; // Power pin BM019
-//const int BLEPin = 3; // BLE power pin.
-//const int BLEState = 2; // BLE connection state pin
-const int MOSIPin = 13;
-const int SCKPin = 14;
-byte FirstRun = 1;
-float lastGlucose;
-#endif
 #ifdef ESP32
 const int SSPin = 5;  // Slave Select pin
 const int IRQPin = 26;  // Sends wake-up pulse for BM019
 const int NFCPin1 = 16; // Power pin BM019
-const int NFCPin2 = 17; // Power pin BM019
+const int NFCPin2 = 17; // Power pin BM019                  //ESP32 --> TTGO T7 V1.3 Mini
 const int NFCPin3 = 21; // Power pin BM019
 const int NFCPin4 = 22; // Power pin BM019
 const int MOSIPin = 23;
 const int SCKPin = 19;
-//unsigned long boottime;
 unsigned long sleeptime;
+byte batteryLow;
 RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR byte FirstRun = 1;
 RTC_DATA_ATTR float lastGlucose;
-
 BLEServer* pServer = NULL;
 BLECharacteristic* pTxCharacteristic = NULL;
 BLECharacteristic* pRxCharacteristic = NULL;
@@ -142,41 +116,27 @@ class CharacteristicUART : public BLECharacteristicCallbacks
 
 //===================================================================================================================
 
-
 #endif
 
-
 void setup() {
-//    boottime = millis();
     BM19PowerOn();
-
     Serial.begin(9600);
+   
 #ifdef ESP32
-
+  pinMode(LED_BUILTIN, OUTPUT);
   BLEDevice::init("LimiTTer");
   //BLEDevice::getAddress(); // Retrieve our own local BD BLEAddress
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new EtatServeur());
-  
   BLEService *pServiceUART = pServer->createService(SERVICE_UART_UUID);
   pTxCharacteristic = pServiceUART->createCharacteristic(CHARACTERISTIC_UUID_TX, BLECharacteristic::PROPERTY_NOTIFY);
   // Create a BLE Descriptor : Client Characteristic Configuration (for indications/notifications)
   pTxCharacteristic->addDescriptor(new BLE2902());
   pRxCharacteristic = pServiceUART->createCharacteristic(CHARACTERISTIC_UUID_RX, BLECharacteristic::PROPERTY_WRITE);
   pRxCharacteristic->setCallbacks(new CharacteristicUART());
-  
   pServiceUART->start();
-
   pServer->getAdvertising()->start();
-  //BLEAdvertising *pAdvertising = pServer->getAdvertising();
-  //pAdvertising->start();
-  //Serial.println("UART Over BLE start advertising");
 #endif
-
-
-     //Increment boot number and print it every reboot
-////    ++bootCount;
-////    Serial.println("Boot number: " + String(bootCount));
 }
 
 #ifdef BUG_SPI
@@ -204,22 +164,18 @@ void BM19PowerOn()
     digitalWrite(NFCPin2, HIGH);
     digitalWrite(NFCPin3, HIGH);
     digitalWrite(NFCPin4, HIGH);
-
     pinMode(MOSIPin, OUTPUT);
     pinMode(SCKPin, OUTPUT);
-
     SPI.setDataMode(SPI_MODE0);
     SPI.setBitOrder(MSBFIRST);
     SPI.setClockDivider(SPI_CLOCK_DIV128);
     SPI.begin();
-
     delay(10);                      // send a wake up
     digitalWrite(IRQPin, LOW);      // pulse to put the 
     delayMicroseconds(100);         // BM019 into SPI
     digitalWrite(IRQPin, HIGH);     // mode 
     delay(10);
     digitalWrite(IRQPin, LOW);
-    
 }
 
 void BM19PowerOff()
@@ -227,8 +183,8 @@ void BM19PowerOff()
  SPI.end();
  digitalWrite(MOSIPin, LOW);
  digitalWrite(SCKPin, LOW);
- digitalWrite(NFCPin1, LOW); // Turn off all power sources completely
- digitalWrite(NFCPin2, LOW); // for maximum power save on BM019.
+ digitalWrite(NFCPin1, LOW);         // Turn off all power sources completely
+ digitalWrite(NFCPin2, LOW);         // for maximum power save on BM019.
  digitalWrite(NFCPin3, LOW);
  digitalWrite(NFCPin4, LOW);
  digitalWrite(IRQPin, LOW);
@@ -369,12 +325,12 @@ Serial.println("Read Memory");
   do {
     readError = 0;   
     digitalWrite(SSPin, LOW);
-    SPI.transfer(0x00);  // SPI control byte to send command to CR95HF
-    SPI.transfer(0x04);  // Send Receive CR95HF command
-    SPI.transfer(0x03);  // length of data that follows
-    SPI.transfer(0x02);  // request Flags byte
-    SPI.transfer(0x20);  // Read Single Block command for ISO/IEC 15693
-    SPI.transfer(b);  // memory block address
+    SPI.transfer(0x00);           // SPI control byte to send command to CR95HF
+    SPI.transfer(0x04);           // Send Receive CR95HF command
+    SPI.transfer(0x03);           // length of data that follows
+    SPI.transfer(0x02);           // request Flags byte
+    SPI.transfer(0x20);           // Read Single Block command for ISO/IEC 15693
+    SPI.transfer(b);              // memory block address
     digitalWrite(SSPin, HIGH);
     delay(10);
    
@@ -564,6 +520,7 @@ void Send_Packet(String packet) {
       } else {
         Serial.println("Pb BLE connection, Packet not sent : " + packet);
       }
+      
 #endif      
       delay(100);
     }
@@ -596,9 +553,70 @@ void goToSleep() {
 
 }
 
+int read_adc(){
+  int adc_value = 0;
+  int adc_value_new = 0;
+  for (int i=0; i<21; i++) {
+      adc_value_new = analogRead(ADC_PIN);
+      adc_value = adc_value + adc_value_new;
+    }
+  adc_value = adc_value/20;
+  return adc_value;
+}
+
+int read_battery_level(){
+  int battery_level = map(read_adc(), 1500, 2150, 0, 100);
+  if (battery_level > 100){
+    battery_level = 100;
+  }
+  if (battery_level < 1){
+    battery_level = 1;
+  }
+  return battery_level;
+}
+
+void lowBatterySleep() {
+ 
+ SPI.end();
+ digitalWrite(MOSIPin, LOW);
+ digitalWrite(SCKPin, LOW);
+ digitalWrite(NFCPin1, LOW); // Turn off all power sources completely
+ digitalWrite(NFCPin2, LOW); // for maximum power save on BM019.
+ digitalWrite(NFCPin3, LOW);
+ digitalWrite(NFCPin4, LOW);
+ digitalWrite(IRQPin, LOW);
+
+ Serial.print("Battery low! LEVEL: ");
+ Serial.print(batteryPcnt);
+ Serial.print("%");
+ Serial.println("");
+ delay(100);
+
+ // Switch LED on and then off shortly
+    for (int i=0; i<10; i++) {
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(50);
+      digitalWrite(LED_BUILTIN, LOW);
+      delay(100);
+    } 
+}
+
 void loop() {
 
-batteryPcnt=100;
+  batteryPcnt = read_battery_level();
+  if (batteryPcnt < 1)
+    batteryLow = 1;
+  while (batteryLow == 1)
+  {
+    lowBatterySleep();
+    batteryPcnt = read_battery_level();
+    if (batteryPcnt > 10)
+    {
+      batteryLow = 0;
+      //wakeUp();
+      delay(100);
+    }
+  }
   
   if (NFCReady == 0)
   {
